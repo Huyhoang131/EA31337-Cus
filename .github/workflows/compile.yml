@@ -1,0 +1,119 @@
+---
+name: Compile
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    paths:
+      - '**.h'
+      - '**.mq?'
+      - .github/workflows/compile.yml
+      - src/*.mq?
+      - src/*.mq[45h]
+      - src/include/**
+  push:
+    paths:
+      - '**.h'
+      - '**.mq?'
+      - .github/workflows/compile.yml
+      - src/*.mq?
+      - src/*.mq[45h]
+      - src/include/**
+
+env:
+  INDI_COMMON_WORKDIR: ${{ vars.INDI_COMMON_WORKDIR || 'src/indicators/Common' }}
+  INDI_OTHER_WORKDIR: ${{ vars.INDI_OTHER_WORKDIR || 'src/indicators/Other' }}
+
+jobs:
+
+  compile-indicators-common:
+    name: Compile Indicators (Common)
+    uses: EA31337/EA31337-Indicators-Common/.github/workflows/compile.yml@dev
+    with:
+      artifact_prefix: mt
+      skip_cleanup: true
+
+  compile-indicators-other:
+    name: Compile Indicators (Other)
+    uses: EA31337/EA31337-Indicators-Other/.github/workflows/compile.yml@dev
+    with:
+      artifact_prefix: mt
+      skip_cleanup: true
+
+  Compile-EA:
+
+    defaults:
+      run:
+        shell: powershell
+        working-directory: src
+    needs: [compile-indicators-common, compile-indicators-other]
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        mode:
+          - Advanced
+          - Elite
+          - Lite
+          - Rider
+        mode2:
+          - __input__
+          - __resource__
+        version:
+          - 4
+          - 5
+      max-parallel: 2
+
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mt${{ matrix.version }}
+          path: .mt${{ matrix.version }}
+
+      - run: Get-Location
+
+      - name: Enables CLI mode
+        run: echo '#define __cli__' > include/common/mode.h
+
+      - name: Enables Advanced mode
+        if: matrix.mode == 'Advanced'
+        run: echo '#define __advanced__' >> include/common/mode.h
+
+      - name: Enables Elite mode
+        if: matrix.mode == 'Elite'
+        run: echo '#define __elite__' >> include/common/mode.h
+
+      - name: Enables Rider mode
+        if: matrix.mode == 'Rider'
+        run: echo '#define __rider__' >> include/common/mode.h
+
+      - name: Enables custom mode
+        run: echo '#define ${{ matrix.mode2 }}' >> include/common/mode.h
+
+      - name: Compiles EA (MQL4)
+        uses: fx31337/mql-compile-action@master
+        with:
+          include: src
+          path: src/EA31337.mq4
+          verbose: true
+
+      - name: Compiles EA (MQL5)
+        uses: fx31337/mql-compile-action@master
+        with:
+          include: src
+          path: src/EA31337.mq${{ matrix.version }}
+          verbose: true
+
+      - name: List compiled files
+        run: '(Get-ChildItem -Recurse -Path . -Include *.ex[45]).fullname'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: EA31337-${{ matrix.mode }}-ex${{ matrix.version }}(${{ matrix.mode2 }})
+          path: '**/EA*.ex?'

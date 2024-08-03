@@ -1,0 +1,162 @@
+---
+name: Test
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    paths:
+      - '**.h'
+      - '**.mq?'
+      - .github/workflows/test.yml
+      - src/*.mq?
+      - src/*.mq[45h]
+      - src/include/**
+  push:
+    paths:
+      - '**.h'
+      - '**.mq?'
+      - .github/workflows/test.yml
+      - src/*.mq?
+      - src/*.mq[45h]
+      - src/include/**
+
+env:
+  INDI_COMMON_WORKDIR: ${{ vars.INDI_COMMON_WORKDIR || 'src/indicators/Common' }}
+  INDI_OTHER_WORKDIR: ${{ vars.INDI_OTHER_WORKDIR || 'src/indicators/Other' }}
+
+jobs:
+
+  Compile-Indicators-Common:
+    uses: EA31337/EA31337-Indicators-Common/.github/workflows/compile.yml@dev
+    with:
+      artifact_prefix: mt
+      skip_cleanup: true
+  Compile-Indicators-Other:
+    uses: EA31337/EA31337-Indicators-Other/.github/workflows/compile.yml@dev
+    with:
+      artifact_prefix: mt
+      skip_cleanup: true
+
+  Compile-EA:
+
+    defaults:
+      run:
+        shell: powershell
+        working-directory: src
+    needs: [Compile-Indicators-Common, Compile-Indicators-Other]
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        mode:
+          - Advanced
+          - Elite
+          - Lite
+          - Rider
+        mode2:
+          - __resource__
+
+    steps:
+
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: indicators-common
+          path: src/Indicators/Common
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: indicators-other
+          path: src/Indicators/Other
+
+      - name: List compiled files
+        run: '(Get-ChildItem -Recurse -Path . -Include *.ex[45]).fullname'
+
+      - run: Get-Location
+
+      - name: Enables CLI mode
+        run: echo '#define __cli__' > include/common/mode.h
+
+      - name: Enables Advanced mode
+        if: matrix.mode == 'Advanced'
+        run: echo '#define __advanced__' >> include/common/mode.h
+
+      - name: Enables Elite mode
+        if: matrix.mode == 'Elite'
+        run: echo '#define __elite__' >> include/common/mode.h
+
+      - name: Enables Rider mode
+        if: matrix.mode == 'Rider'
+        run: echo '#define __rider__' >> include/common/mode.h
+
+      - name: Enables custom mode
+        run: echo '#define ${{ matrix.mode2 }}' >> include/common/mode.h
+
+      - name: Compiles EA (MQL4)
+        uses: fx31337/mql-compile-action@master
+        with:
+          include: src
+          path: src/EA31337.mq4
+          verbose: true
+
+      - name: Compiles EA (MQL5)
+        uses: fx31337/mql-compile-action@master
+        with:
+          include: src
+          path: src/EA31337.mq5
+          verbose: true
+
+      - name: Moves file (MQL4)
+        run: mv -v *.ex4 "EA31337-${{ matrix.mode }}-${{ github.sha }}.ex4"
+      - name: Moves file (MQL5)
+        run: mv -v *.ex5 "EA31337-${{ matrix.mode }}-${{ github.sha }}.ex5"
+
+      - name: List compiled files
+        run: '(Get-ChildItem -Recurse -Path . -Include *.ex[45]).fullname'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: EA31337-${{ matrix.mode }}
+          path: '**/EA*.ex?'
+
+  Test:
+
+    defaults:
+      run:
+        shell: bash
+
+    needs: Compile-EA
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - Lite
+          - Advanced
+          - Elite
+          - Rider
+        month: [1, 2]
+        year: [2020]
+
+    steps:
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: EA31337-${{ matrix.mode }}
+
+      - name: Test ${{ matrix.year }}.${{ matrix.month }}
+        uses: fx31337/mql-tester-action@master
+        with:
+          BtDeposit: 10000
+          BtDigits: 5
+          BtMonths: ${{ matrix.month }}
+          BtYears: ${{ matrix.year }}
+          OptTrace: ${{ runner.debug }}
+          OptVerbose: true
+          TestExpert: EA31337-${{ matrix.mode }}
+          TestPeriod: M15
